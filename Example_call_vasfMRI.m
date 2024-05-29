@@ -3,7 +3,6 @@
  M0BrainPathIn='/storage/shared/Code/CalibratedfMRI/SampleData/bh_M0_brain_ASL.nii.gz';
  Parameters.FigTitle = 'Sample Breath Hold';
 
-Parameters.FigTitle = 'Sample Breath Hold';
 
 Parameters.lambda=0.9; %brain/blood partition coefficient;
 Parameters.PLD=1.5; % post label delay (s)
