@@ -1,11 +1,8 @@
-% PathInCBF='/storage/shared/Code/CalibratedfMRI/SampleData/bh_asl_raw_mcf.nii.gz';
-% PathInBOLD='/storage/shared/Code/CalibratedfMRI/SampleData/bh_bold_raw_mcf.nii.gz';
-% M0BrainPathIn='/storage/shared/Code/CalibratedfMRI/SampleData/bh_M0_brain_ASL.nii.gz';
-% Parameters.FigTitle = 'Sample Breath Hold';
+ PathInCBF='/storage/shared/Code/CalibratedfMRI/SampleData/bh_asl_raw_mcf.nii.gz';
+ PathInBOLD='/storage/shared/Code/CalibratedfMRI/SampleData/bh_bold_raw_mcf.nii.gz';
+ M0BrainPathIn='/storage/shared/Code/CalibratedfMRI/SampleData/bh_M0_brain_ASL.nii.gz';
+ Parameters.FigTitle = 'Sample Breath Hold';
 
-PathInCBF='/storage/shared/PRINAntonello2022/BIDS/derivatives/sub-02/perf/sub-02_ep2d_dexi_pc_v1_bh_volreg_topup_asl.nii.gz';
-PathInBOLD='/storage/shared/PRINAntonello2022/BIDS/derivatives/sub-02/func/sub-02_ep2d_dexi_pc_v1_bh_volreg_topup_bold.nii.gz';
-M0BrainPathIn='/storage/shared/PRINAntonello2022/BIDS/derivatives/sub-02/perf/sub-02_ep2d_dexi_pc_v1_bh_M0_brain.nii.gz';
 Parameters.FigTitle = 'Sample Breath Hold';
 
 Parameters.lambda=0.9; %brain/blood partition coefficient;
