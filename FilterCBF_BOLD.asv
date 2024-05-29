@@ -1,0 +1,405 @@
+
+% Written by Chiarelli Atonio Maria, University G. D'Annunzio of Chieti-Pescara
+% Original Date: 05/06/2021
+% Last UpDate: 22/01/2024
+
+
+
+%The function inverts the Davis model extended with the flow-diffusion
+%model of oxygen transport to estimate OEF0 and CMRO2 with a single
+%calibrated fMRI experiment using hypercapnia. 
+%The method used the General Linear Model (GLM) to estimate BOLD and ASL
+%CVRs, the BOLD and ASL modulations and the BOLD and ASL SNRs
+% The method uses an explicit search to invert the model and obtain OEF0,
+% assuming a fixed a multiplicative constant equal to Aro/k of unit
+% s^-1g^-beta dL^beta/(micromol/mmHg/ml/min) and a fixed mithocondrial
+% pressure PmO2.
+
+%Inputs:
+%CBF and BOLD coregistered (both spatially and temporally) 4D timecourses
+% CBF in ml of blood/100g of tissue/min
+% BOLD as a raw signal (or a normalize timecourse around 1)
+%MASK= 3D binary mask coregistered to CBF and BOLD volumes (e.g. GM mask)
+%PETO2 trace in mmHg (already temporally locked to BOLD, even HRF convolved if needed)
+%PETCO2 trace in mmHg (already temporally locked to BOLD, even HRF convolved if needed)
+
+
+%Parameters structure must report all the information in the example, with the
+%same units
+%     Parameters.TE=30;  %Time of echo of the BOLD sequence, units of ms
+%     Parameters.TR=8800; %Time of echo of the BOLD and ASL signal, units of ms
+%     Parameters.THP=600; %high pass cut-off time, units of s
+%     Parameters.LHP=600; %low pass cut-off time, units of s
+%     Parameters.beta=1.3; % adimensional
+%     Parameters.alpha=0.38; % Grubb exponent
+%     Parameters.phi=1.32; % Oxygen binding capacity of hemoglobin, ml of oxygen/g of Hb
+%     Parameters.epsilon=0.0031; % Oxygen plasma solubility, ml/mmHg/dL
+%     Parameters.h=2.8; % Hill coefficient, adimensional
+%     Parameters.Hb=14;  %hemoglobin in blood g/dL
+%     OEFmin=0; % minimum OEF allowed
+%     OEFmax=1; % maximum OEF allowed
+%     OEFstep=10^-3; %OEF step for explicit search during the inversion (smaller steps slow the procedure, coarser steps make the estimate coarser)
+%     baseline=1:13; %baseline volumes
+%     Parameters.PmO2=0; % assumed average partial pressure at the mithocondria (mmHg)
+%     %(units of mmHg, close to zero in Healthy subjects, i would use 10 in disease);
+%     Parameters.Aro_k=8.8; % units of s^-1g^-beta dL^beta/(micromol/mmHg/ml/min) (suggested 10 s^-1g^-beta dL^beta/(micromol/mmHg/ml/min) at 3 T)
+%     Parameters.n=10^5; %flow/cmro2 modulation ration. with isometabolism
+%     n is very high.
+%     Parameters.shift=0;;% temporal (positive and negative) admissable time shift
+%     (seconds)
+%     between regressor and voxel signal allowed
+
+%FigOn=1 creates matlab figures of the analysis outcome
+
+%Outputs:
+% The function returns voxelwise maps of OEF0 (Relative Units), CMR02 (micromol/100g/min), 
+%CVR (%CBF/mmHg of CO2), BOLD_CVR (%BOLD/mmHg of CO2), 
+%SNR_ASL of the hypercapnic modulation and SNR_BOLD of the hypercapnic modulation
+
+
+
+
+
+
+function [outcome]=Filter_CBF_BOLD(CBF,BOLD,PETO2,PETCO2,Parameters,FigOn)
+
+
+
+
+
+% inizialize the outcome structure
+DIM=size(CBF);
+outcome.M=NaN([DIM(1:3)]);
+outcome.OEF0=NaN([DIM(1:3)]);
+outcome.CBF0=NaN([DIM(1:3)]);
+outcome.MCTT0=NaN([DIM(1:3)]);
+outcome.CMRO20=NaN([DIM(1:3)]);
+outcome.CVR=NaN([DIM(1:3)]);
+outcome.BOLD_CVR=NaN([DIM(1:3)]);
+outcome.CBFlag=NaN([DIM(1:3)]);
+outcome.BOLDlag=NaN([DIM(1:3)]);
+outcome.SNR_ASL=NaN([DIM(1:3)]);
+outcome.SNR_BOLD=NaN([DIM(1:3)]);
+outcome.Parameters=Parameters;
+
+% import the needed parameters
+TE=Parameters.TE;
+TR=Parameters.TR;
+THP=Parameters.THP;
+TLP=Parameters.TLP;
+beta=Parameters.beta;
+alpha=Parameters.alpha;
+phi= Parameters.phi;
+epsilon=Parameters.epsilon;
+h=Parameters.h;
+OEFmin=Parameters.OEFmin;
+OEFmax=Parameters.OEFmax;
+OEFstep=Parameters.OEFstep;
+baseline=Parameters.baseline;
+PmO2=Parameters.PmO2;
+Aro_k=Parameters.Aro_k;
+Hb=Parameters.Hb;
+n=Parameters.n;
+shift=Parameters.shift;
+
+% compute P50 from baselie CO2
+HCO3m=24; %mmol/L;
+pH=6.1+log10(HCO3m/(0.03*mean(PETCO2(baseline))));
+P50=221.87-26.37*pH; % blood oxygen tension at which haemoglobin is 50% saturated (mmHg)
+
+
+% compute changes in O2 and CO2
+DCO2=PETCO2-mean(PETCO2(baseline));
+DO2=PETO2-mean(PETO2(baseline));
+
+
+% compute baseline gas values
+PaO20=mean(PETO2(baseline)); % mmHg
+SaO20=1/(1+(P50/PaO20)^h);
+CaO20=phi*SaO20*Hb+epsilon*PaO20; % ml of oxygen/dl of blood
+PaO2cap=PaO20; % mmHg %%%%%%%%%% WARNING: Modify if you assume changes in PaO20 with hypercapnia
+SaO2cap=1/(1+(P50/PaO2cap)^h);
+CaO2cap=phi*SaO2cap*Hb+epsilon*PaO2cap; % ml of oxygen/dl of blood
+
+outcome.PaCO20=mean(PETCO2(baseline));
+outcome.PaO20=PaO20;
+outcome.CaO20=CaO20;
+outcome.SaO20=SaO20;
+outcome.PaO2cap=PaO2cap; 
+outcome.SaO2cap=SaO2cap;
+outcome.CaO2cap=CaO2cap; 
+outcome.mask=MASK;
+
+% filter gases
+fsample=1/TR*1000;
+HP=1./THP;
+LP=1./TLP;
+shiftS=round(shift*fsample);
+
+if ~isempty(HP) && isempty(LP)
+[NHP,DHP]=butter(4,2*HP/fsample,'high');
+DCO2f=filtfilt(NHP,DHP,DCO2);
+DO2f=filtfilt(NHP,DHP,DO2);
+end
+if ~isempty(LP) && isempty(HP)
+[NLP,DLP]=butter(4,2*LP/fsample,'low');
+DCO2f=filtfilt(NLP,DLP,DCO2);
+DO2f=filtfilt(NLP,DLP,DO2);
+end
+if ~isempty(HP) && ~isempty(LP)
+[NHP,DHP]=butter(4,2*HP/fsample,'high');
+[NLP,DLP]=butter(4,2*LP/fsample,'low');
+DCO2f=filtfilt(NLP,DLP,filtfilt(NHP,DHP,DCO2));
+DO2f=filtfilt(NLP,DLP,filtfilt(NHP,DHP,DO2));
+end
+if isempty(HP) && isempty(LP)
+DCO2f=DCO2;
+DO2f=DO2;    
+end
+
+
+
+outcome.PETCO2_filtered=DCO2f;
+outcome.PETO2_filtered=DO2f;
+
+
+
+
+OEF0=OEFmin:OEFstep:OEFmax;
+
+Yb=NaN([DIM]);
+Yf=NaN([DIM]);
+h1 = waitbar(0,'Computing voxelwise CBF_{0}, OEF_{0} and CMRO_{2,0} within the mask, Please wait...');
+for ii=1:DIM(1)
+  
+    for jj=1:DIM(2)
+        for kk=1:DIM(3)
+            if MASK(ii,jj,kk)>0  % run for all voxels within the mask
+                
+                cbf=squeeze(CBF(ii,jj,kk,:)); %CBF signal within the voxel
+                bold=squeeze(BOLD(ii,jj,kk,:))./nanmean(squeeze(BOLD(ii,jj,kk,baseline))); %BOLD fractional change within the voxel
+                if (~isnan(bold(1)))
+                    cbf(isnan(cbf))=0;
+                    
+                    %  filter fMRI data and apply GLM analysis
+                    
+                    if ~isempty(HP) && isempty(LP)              
+                        Yf1=filtfilt(NHP,DHP,cbf);
+                    end
+                    if ~isempty(LP) && isempty(HP)       
+                        Yf1=filtfilt(NLP,DLP,cbf);
+                    end
+                    if ~isempty(HP) && ~isempty(LP)
+                        Yf1=filtfilt(NLP,DLP,filtfilt(NHP,DHP,cbf));
+                    end
+                    if isempty(HP) && isempty(LP)
+                        Yf1=cbf;
+                    end  
+                    Yf(ii,jj,kk,:)=Yf1-mean(Yf1);
+                    bold(isnan(bold))=0;          
+                    
+                    Yb1=filtfilt(NHP,DHP,bold);
+                    if ~isempty(HP) && isempty(LP)
+                        Yb1=filtfilt(NHP,DHP,bold);
+                    end
+                    if ~isempty(LP) && isempty(HP)
+                        Yb1=filtfilt(NLP,DLP,bold);
+                    end
+                    if ~isempty(HP) && ~isempty(LP)
+                        Yb1=filtfilt(NLP,DLP,filtfilt(NHP,DHP,bold));
+                    end
+                    if isempty(HP) && isempty(LP)
+                        Yb1=bold;
+                    end
+                    Yb(ii,jj,kk,:)=Yb1-mean(Yb1);
+
+                    if shiftS==0
+                        CBFb=glmfit([DCO2f],squeeze(Yf(ii,jj,kk,:))); % [0 std(squeeze(Yf(ii,jj,kk,:)))];%
+                        BOLDb=glmfit([DCO2f],squeeze(Yb(ii,jj,kk,:))); % [0 std(squeeze(Yb(ii,jj,kk,:)))];
+                        indF=0;
+                        indB=0;
+                    else
+                        [z,lags]=xcorr([DCO2f],squeeze(Yf(ii,jj,kk,:)),shiftS);
+                        indF=lags(z==max(z));
+                        CBFb=glmfit([DCO2f],circshift(squeeze(Yf(ii,jj,kk,:)),indF(1))); %[0 std(squeeze(Yf(ii,jj,kk,:)))];%
+                        [z,lags]=xcorr([DCO2f],squeeze(Yb(ii,jj,kk,:)),shiftS);
+                        indB=lags(z==max(z));
+                        BOLDb=glmfit([DCO2f],circshift(squeeze(Yb(ii,jj,kk,:)),indB(1))); % [0 std(squeeze(Yb(ii,jj,kk,:)))];%
+                    end
+
+
+
+                    % compute SNR based on beta-weights of the GLM
+                    outcome.SNR_ASL(ii,jj,kk)=CBFb(2)*(max(DCO2f))./std(squeeze(Yf(ii,jj,kk,:))-CBFb(1)-CBFb(2)*(DCO2f-mean(DCO2f)))*sqrt(length(DCO2));
+                    outcome.SNR_BOLD(ii,jj,kk)=BOLDb(2)*(max(DCO2f))./std(squeeze(Yb(ii,jj,kk,:))-BOLDb(1)-BOLDb(2)*(DCO2f-mean(DCO2f)))*sqrt(length(DCO2));
+                    
+                    % compute SNR based on beta-weights of the GLM
+                    Diff=[];
+                    Mest=[];
+                    MCTTest=[];
+                    for i=1:length(OEF0)
+                        
+                        SvO20=CaO20./(phi*Hb).*(1-OEF0(i));
+                        CBF0=mean(cbf(baseline)); % ml of blood/100g of tissue/min
+                        CBFcap=CBF0+CBFb(2)*(max(DCO2f));
+                        m=1+(CBFcap/CBF0-1)/n;
+                        OEFcap=m*CBF0.*OEF0(i).*CaO20./(CBFcap.*CaO2cap); 
+                        SvO2cap=CaO2cap./(phi*Hb).*(1-OEFcap);
+                        Dcap=(1-(CBFcap./CBF0).^alpha.*((1-SvO2cap)./(1-SvO20)).^beta);
+                        BOLDcap=(BOLDb(2))*(max(DCO2f));
+                        Tcap=OEF0(i)*CaO20/((P50*(2/OEF0(i)-1).^1/h)-PmO2);
+                        Mest(i)=1/(2.24*10^5)*Aro_k*TE*CBF0*Tcap*((1-SvO20)*Hb).^beta;
+                        MCTTest(i)=6*10^6/3*Mest(i)/(Aro_k*TE*CBF0*((1-SvO20)*Hb).^beta);
+                       % Mest(i)=1/(60*10^5)*Aro_k*TE*CBF0*3*((1-SvO20)*Hb).^beta;
+                        BOLDest=Mest(i)*Dcap;
+                        Diff(i)=sqrt((BOLDcap-BOLDest)^2)/BOLDcap;
+                        
+                    end
+                    RMSE_M=(sqrt((Diff).^2)); [~, OEF_ind]=min(RMSE_M);
+                    outcome.CVR(ii,jj,kk)=(CBFcap/CBF0-1)/max(DCO2f);
+                    outcome.BOLD_CVR(ii,jj,kk)=BOLDb(2);
+                    outcome.CBF0(ii,jj,kk)=CBF0;
+                    outcome.CBFlag(ii,jj,kk)=indF(1)/fsample;
+                    outcome.BOLDlag(ii,jj,kk)=indB(1)/fsample;
+                    if (OEF0(OEF_ind)>OEFmin) && (OEF0(OEF_ind)<OEFmax)
+                        outcome.M(ii,jj,kk)=real(Mest(OEF_ind));
+                        outcome.MCTT0(ii,jj,kk)=real(MCTTest(OEF_ind));
+                        outcome.OEF0(ii,jj,kk)=OEF0(OEF_ind);
+                        outcome.CMRO20(ii,jj,kk)=outcome.OEF0(ii,jj,kk).*CBF0*CaO20*10^-2*10^-3*10^6/22.4;
+                    end
+                end
+            end
+        end
+    end
+    waitbar(ii/DIM(1),h1)
+end
+close(h1)
+
+Yff=Yf./repmat(CBF0,[1 1 1 DIM(4)]);
+
+
+outcome.CBF_CBF0_Filtered=squeeze(nanmedian(reshape(Yff,[DIM(1)*DIM(2)*DIM(3) DIM(4)]))+1);
+outcome.DBOLD_BOLD0_Filtered=squeeze(nanmedian(reshape(Yb,[DIM(1)*DIM(2)*DIM(3) DIM(4)])));
+
+
+
+if FigOn==1
+    
+    
+    fs=10;
+    FigH = figure('Position', get(0, 'Screensize'));
+    subplot(3,2,1)
+    plot([1:length(PETCO2)]/fsample,PETCO2)
+    xlabel('Time (s)')
+    ylabel('End-Tidal CO_{2} (mmHg)')
+    set(gca,'FontSize',fs,'FontWeight','bold')
+    set(gca,'FontSize',fs,'FontWeight','bold')
+    subplot(3,2,2)
+    plot([1:length(PETCO2)]/fsample,PETO2)
+    xlabel('Time (s)')
+    ylabel('End-Tidal O_{2} (mmHg)')
+    set(gca,'FontSize',fs,'FontWeight','bold')
+    subplot(3,2,3)
+    plot([1:length(PETCO2)]/fsample,outcome.PETCO2_filtered)
+    hold on
+    xlabel('Time (s)')
+    ylabel('End-Tidal CO_{2} (mmHg)')
+    set(gca,'FontSize',fs,'FontWeight','bold')
+    title('Filtered')
+    subplot(3,2,4)
+    plot([1:length(PETCO2)]/fsample,outcome.PETO2_filtered)
+    hold on
+    xlabel('Time (s)')
+    ylabel('End-Tidal O_{2} (mmHg)')
+    set(gca,'FontSize',fs,'FontWeight','bold')
+    title('Filtered')
+    subplot(3,2,5)
+    plot([1:length(PETCO2)]/fsample,outcome.CBF_CBF0_Filtered)
+    hold on
+    xlabel('Time (s)')
+    ylabel('CBF/CFB0 (%)')
+    title('Filtered, mask Average')
+    set(gcf,'color','w');
+    set(gca,'FontSize',fs,'FontWeight','bold')
+    subplot(3,2,6)
+    plot([1:length(PETCO2)]/fsample,outcome.DBOLD_BOLD0_Filtered)
+    hold on
+    xlabel('Time (s)')
+    ylabel('DBOLD/DBOLD0 (%)')
+    set(gcf,'color','w');
+    set(gca,'FontSize',fs,'FontWeight','bold')
+    title('Filtered, mask Average')
+    
+     
+    FigH = figure('Position', get(0, 'Screensize'));
+    subplot(3,2,1)
+    imagesc(rot90(outcome.CBF0(:,:,round(DIM(3)/2))))
+    axis off
+    axis equal
+    caxis([0 100])
+    title('CBF_{0}')
+    hcb=colorbar;
+    title(hcb,'(ml/100g/min)')
+    set(gca,'FontSize',fs,'FontWeight','bold')
+    subplot(3,2,2)
+    A=outcome.CBF0;
+    A(A>200)=NaN;
+    hist(A(:),round(sqrt(sum(~isnan(A(:))))))
+    axis([0 200 0 Inf])
+    xlabel('CBF_{0} (ml/100g/min)')
+    ylabel('Absolute Frequency within the mask')
+    set(gca,'FontSize',fs,'FontWeight','bold') 
+    axis square
+    subplot(3,2,3)
+    imagesc(rot90(outcome.OEF0(:,:,round(DIM(3)/2))))
+    axis off
+    axis equal
+    caxis([0 1])
+    hcb=colorbar;
+    title('OEF_{0}')
+    set(gca,'FontSize',fs,'FontWeight','bold')
+    subplot(3,2,4)
+    A=outcome.OEF0;
+    hist(A(:),round(sqrt(sum(~isnan(A(:))))))
+    axis([0 1 0 Inf])
+    xlabel('OEF_{0}')
+    ylabel('Absolute Frequency within the mask')
+    set(gca,'FontSize',fs,'FontWeight','bold') 
+    axis square
+    subplot(3,2,5)
+    imagesc(rot90(outcome.CMRO20(:,:,round(DIM(3)/2))))
+    axis off
+    axis equal
+    caxis([0 300])
+    hcb=colorbar;
+    title('CMRO_{2,0}')
+    title(hcb,'(\mumol/100g/min)')
+    set(gca,'FontSize',fs,'FontWeight','bold')
+    subplot(3,2,6)
+    A=outcome.CMRO20;
+    A(A>300)=NaN;
+    hist(A(:),round(sqrt(sum(~isnan(A(:))))))
+    axis([0 300 0 Inf])
+    xlabel('CMRO_{2,0} (\mumol/100g/min)')
+    ylabel('Absolute Frequency within the mask')
+    set(gca,'FontSize',fs,'FontWeight','bold') 
+    set(gcf,'color','w'); 
+    axis square
+     
+     
+     
+     
+     
+     
+     
+     
+     
+
+
+
+
+end
+
+    
+  
+        
