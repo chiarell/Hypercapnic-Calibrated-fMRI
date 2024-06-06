@@ -39,7 +39,7 @@ Parameters.shift=10; % shift for the regressor allowed, s
 Parameters.InvMethod='Grid'; % inverse method, either Grid, Newton, or Search
 %% Pre-process ASL to extract CBF
 
-tag=0;
+tag=1;
 FigOn=1;
 [ASL]=RAW2CBF(PathInCBF,M0BrainPathIn,tag,Parameters,FigOn);
 
