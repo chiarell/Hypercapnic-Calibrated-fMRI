@@ -1,10 +1,8 @@
-% Written by Chiarelli Antonio Maria, University G. D'Annunzio of Chieti-Pescara
+%Written by Chiarelli Antonio Maria, University G. D'Annunzio of Chieti-Pescara
 % Original Date: 08/03/2024
 % Last Update: 05/03/2024
 
-
-
-%The function estimate CBF timecourses and average CBF map from from BOLD-ASL fMRI.
+%The function estimate CBF timecourses and average CBF map from BOLD-ASL fMRI.
 % The volumes should be preprocessed including susceptibility distortions
 % correction, motion correction and registration to M0
 %Inputs:
@@ -20,8 +18,11 @@
 %Parameters.alphaASLInv, efficiency correction due to background suppression
 %Parameters.tau, tagging time (s)
 %Parameters.TR, Effective Repetition Time of dexi (seconds)
+% Parameters.GM, GM mask (binary), if not provided, GM PVE will be estimated from CBF map, and GM mask will be defined as PVEGM>GMTH
 %Parameters.GMTH, an algorithm to extract the GM PVE directly from CBF is
 %implemented, GM threhsold is used to define the GM Mask
+%Parameters.SliceTiming, vector of time acquisition of slices (seconds), starting from
+%0
 %Parameters.FigTitle= String with the title of the figures
 % FigOn, 1 plot figures, 0 do not plot figures
 %Output:
@@ -39,18 +40,16 @@
 
 
 
-
-
-
-
 function [ASL]=RAW2CBF(PathIn,M0BrainPathIn,tag,Parameters,FigOn)
 
 %% Import Images
 TE1_hdr = spm_vol(PathIn); 
 TE1=spm_read_vols(TE1_hdr);
+%TE1=TE1(:,:,2:1:end,:);%Manuela:remove the first slice
 
 M0b_hdr = spm_vol(M0BrainPathIn);
 M0b=spm_read_vols(M0b_hdr);
+%M0b=M0b(:,:,2:1:end,:);
 
 %% Import Parameters
 baseline=Parameters.baseline;
@@ -62,7 +61,20 @@ alphaASLInv=Parameters.alphaASLInv; % efficiency correction due to background su
 tau=Parameters.tau; % tagging time (s)
 TR=Parameters.TR; % Effective Repetition Time of dexi (s)
 GMTH=Parameters.GMTH;% GM threhsold
-
+if isfield(Parameters,'SliceTiming')
+    % handle shape of SliceTiming, if it's a vector, convert to 3D array with singleton dimensions
+    if isvector(Parameters.SliceTiming)
+        disp('json_asl vector file, asl_slice_timing correction')
+        SliceTiming = zeros(1,1,size(TE1,3)); 
+        SliceTiming(1,:,:) = Parameters.SliceTiming;
+    else
+        disp('json_asl no vector file, asl_slice_timing correction')
+        SliceTiming = Parameters.SliceTiming;
+    end
+else
+    disp('no json_asl file, no asl_slice_timing correction')
+    SliceTiming = zeros(1,1,size(TE1,3));
+end
 
 %% Perform surround subtraction on raw TE1
 D=diff(TE1,1,4);
@@ -72,7 +84,7 @@ else
     D(:,:,:,1:2:end,:)=-D(:,:,:,1:2:end,:);
 end
 %% Quantify CBF (a anatomy featureless M0 is identified through quadratic interpolation)
-Mult=6000*lambda*exp(PLD./T1b)./(2*alphaASL.*alphaASLInv*T1b.*(1-exp(-tau./T1b)));
+Mult=6000*lambda*exp((PLD+SliceTiming)./T1b)./(2*alphaASL.*alphaASLInv*T1b.*(1-exp(-tau./T1b))); %fattore moltiplicativo
 %Mult=6000*lambda*exp(PLD./T1b)./(2*alpha.*alphaInv*T1b.*(1-exp(-tau./T1b)));
 
 %     D=diff(ASL,1,4);%ASL(:,:,:,2:2:end,:)-ASL(:,:,:,1:2:end,:);
@@ -89,12 +101,12 @@ Mult=6000*lambda*exp(PLD./T1b)./(2*alphaASL.*alphaASLInv*T1b.*(1-exp(-tau./T1b))
 %Mult=6000*lambda*exp(PLD./T1b)./(2*alpha.*alphaInv*T1b.*(1-exp(-tau./T1b)));
 
 
-
+%%
 M00=squeeze(M0b(:,:,:,1));
 M00(M00==0)=NaN;
 s=size(M00);
 [X,Y,Z] = meshgrid(1:s(1),1:s(2),1:s(3));
-
+%%
 %Set the basis functions
 f1 = X.^2;
 f2 = Y.^2;
@@ -108,6 +120,7 @@ f9=Z;
 f10=ones(size(X));
 %Write as matrix equation
 B = [f1(:),f2(:),f3(:), f4(:),f5(:),f6(:),f7(:),f8(:),f9(:),f10(:)];
+%%
 y = M00(:);
 %Solve for coefficients
 B(isnan(y),:)=[];
@@ -122,23 +135,25 @@ interpf=c(1)*f1+c(2)*f2+c(3)*f3+c(4)*f4+c(5)*f5+c(6)*f6+c(7)*f7+c(8)*f8+c(9)*f9+
 M000=double(M00>0).*interpf;
 M000(M000==0)=NaN;
 
-
+s=size(D);
 m00=repmat(squeeze(M000),[1 1 1 size(D,4)]);
-CBF=squeeze(D)./m00*Mult;
+CBF=squeeze(D)./m00.*repmat(Mult,[s(1) s(2) 1 s(4)]);
 CBF(m00==0)=NaN;
 
 %% Compute Average CBF map and Temporal SNR
 CBF0=nanmean(CBF(:,:,:,baseline),4);
 tSNR=CBF0./nanstd(CBF(:,:,:,baseline),[],4);
 
-%% Estimate GM PVE and GM Mask from CBF map 
-PVEGM=[];
-GM=[];
-
-
-
-PVEGM=CBF0/(prctile(CBF0(:),95)-prctile(CBF0(:),5));
-GM=PVEGM>GMTH;
+if isfield(Parameters,'GM')
+    PVEGM=Parameters.GM;
+    GM=PVEGM>GMTH;
+else
+    %% Estimate GM PVE and GM Mask from CBF map 
+    PVEGM=[];
+    GM=[];
+    PVEGM=CBF0/(prctile(CBF0(:),95)-prctile(CBF0(:),5));
+    GM=PVEGM>GMTH;
+end
 
 %% Extract Median GM Signal
 CBFGM=[];
@@ -154,7 +169,7 @@ DM0=mean(D,4).*double(M00>0);
 DM0(DM0==0)=NaN;
 
 ASL.CBF=CBF;
-ASL.PERFUSION0=CBF0/Mult;
+ASL.PERFUSION0=CBF0./repmat(Mult,[s(1) s(2) 1]);
 ASL.DM0=DM0;
 ASL.CBF0=CBF0;
 ASL.CBFGM=CBFGM;
@@ -162,9 +177,11 @@ ASL.PVEGM=PVEGM;
 ASL.GM=GM;
 ASL.tSNR=tSNR;
 ASL.Parameters=Parameters;
+
 %% Plot Data If Required
 if FigOn==1
 FigTitle=Parameters.FigTitle;
+
    FigH = figure('Position', get(0, 'Screensize'));
     for k=1:size(CBF0,3)
 
@@ -188,7 +205,8 @@ FigTitle=Parameters.FigTitle;
     title(FigTitle);
     axis off
     set(gca,'FontSize',12,'FontWeight','bold')
-
+    
+    
 
 
     FigH = figure('Position', get(0, 'Screensize'));
@@ -215,6 +233,9 @@ FigTitle=Parameters.FigTitle;
     title(FigTitle);
     axis off
     set(gca,'FontSize',12,'FontWeight','bold')
+
+    
+
 
     FigH = figure('Position', get(0, 'Screensize'));
     for k=1:size(CBF0,3)
@@ -243,6 +264,7 @@ FigTitle=Parameters.FigTitle;
    
 
 
+
     FigH = figure('Position', get(0, 'Screensize'));
     plot(1:length(ASL.CBFGM),ASL.CBFGM)
     xlabel('Samples')
@@ -251,6 +273,7 @@ FigTitle=Parameters.FigTitle;
     ylabel('Median GM CBF Timecourse (ml/100g/min)')
     set(gcf,'color','w');
     set(gca,'FontSize',12,'FontWeight','bold')
+
 
 
 
@@ -283,6 +306,5 @@ FigTitle=Parameters.FigTitle;
     set(gca,'FontSize',12,'FontWeight','bold')
 
 
+
 end
-
-
