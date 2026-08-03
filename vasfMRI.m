@@ -1,9 +1,9 @@
 
-% Written by Chiarelli Atonio Maria, University G. D'Annunzio of Chieti-Pescara
+% Written by Chiarelli Antonio Maria, University G. D'Annunzio of Chieti-Pescara
 % Original Date: 05/06/2021
 %Last Update: 05/03/2024
 
-%If used for publication, please site the following papers:
+%If used for publication, please cite the following papers:
 
 %Chiarelli, A. M., Germuska, M., Chandler, H., Stickland, R., Patitucci, E., Biondetti, E., ... & Wise, R. G. (2022). A flow-diffusion model of oxygen transport for quantitative mapping of cerebral metabolic rate of oxygen (CMRO2) with single gas calibrated fMRI. Journal of Cerebral Blood Flow & Metabolism, 42(7), 1192-1209.
 %Germuska, M., Chandler, H. L., Stickland, R. C., Foster, C., Fasano, F., Okell, T. W., ... & Wise, R. G. (2019). Dual-calibrated fMRI measurement of absolute cerebral metabolic rate of oxygen consumption and effective oxygen diffusivity. Neuroimage, 184, 717-728.
@@ -111,10 +111,12 @@ n=Parameters.n;
 shift=Parameters.shift;
 InvMethod=Parameters.InvMethod;
 
+
+
 %% compute P50 from baseline CO2
 PaCO20=fMRIfilt.PaCO20;
 HCO3m=24; %mmol/L;
-pH=6.1+log10(HCO3m/(0.03*PaCO20));
+pH=6.1+log10(HCO3m/(0.03*PaCO20)); 
 P50=221.87-26.37*pH; % blood oxygen tension at which haemoglobin is 50% saturated (mmHg)
 
 %% compute saturation and oxygen concentration in arterial blood at rest
@@ -387,7 +389,7 @@ m=1+(CBFm/CBF0-1)/n;
 OEFm=m*CBF0.*OEF0.*CaO20./(CBFm.*CaO2m);
 SvO2m=CaO2m./(phi*Hb).*(1-OEFm);
 Dm=(1-(CBFm./CBF0).^alpha.*((1-SvO2m)./(1-SvO20)).^beta);
-Tm=OEF0*CaO20/((P50*(2/OEF0-1).^1/h)-PmO2);
+Tm=OEF0*CaO20/((P50*(2/OEF0-1).^(1/h))-PmO2);
 M=1/(2.24*10^5)*Aro_k*TE*CBF0*Tm*((1-SvO20)*Hb).^beta; % compute Maximum bold modulation in relative units
 MCTT=6*10^6/3*M/(Aro_k*TE*CBF0*((1-SvO20)*Hb).^beta);  % compute mean capillary transit time in seconds
 BOLD=M*Dm;
